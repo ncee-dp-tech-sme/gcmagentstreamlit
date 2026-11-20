@@ -2,6 +2,7 @@
 # Fri Nov 20 01:39:30 CET 2026 - Initial version: minimal MCP streamable-HTTP client (JSON-RPC over requests)
 # Fri Nov 20 01:39:30 CET 2026 - Added tool helpers is_read_only() and required_args()
 # Fri Nov 20 02:59:39 CET 2026 - Prefix MCP HTTP errors with GCM MCP server identifier for clear attribution
+# Fri Nov 20 03:55:54 CET 2026 - Dynamic tool discovery header (x-mcp-enable-discovery) is now optional, off by default
 """Minimal MCP client for the Guardium Cryptography Manager (streamable HTTP transport).
 
 Implements initialize -> notifications/initialized -> tools/list / tools/call over a single
@@ -66,19 +67,24 @@ class ConnectionResult:
 
 
 # Fri Nov 20 01:39:30 CET 2026 - Headers required by the GCM MCP server (token masked when requested)
-def build_headers(token: str, *, mask: bool = False) -> dict[str, str]:
+def build_headers(token: str, *, mask: bool = False, dynamic_tools: bool = False) -> dict[str, str]:
     shown = "Bearer ********" if mask else f"Bearer {token}"
-    return {"Authorization": shown, "token_type": "api_key", "x-mcp-enable-discovery": "true"}
+    headers = {"Authorization": shown, "token_type": "api_key"}
+    if dynamic_tools:
+        headers["x-mcp-enable-discovery"] = "true"
+    return headers
 
 
 # Fri Nov 20 01:39:30 CET 2026 - MCP server configuration structure (as used by MCP clients)
-def build_server_config(endpoint: str, token: str, verify_ssl: bool, *, mask: bool = True) -> dict:
+def build_server_config(
+    endpoint: str, token: str, verify_ssl: bool, *, mask: bool = True, dynamic_tools: bool = False
+) -> dict:
     return {
         "mcpServers": {
             "guardium-cryptography-manager": {
                 "type": "streamable-http",
                 "url": endpoint,
-                "headers": build_headers(token, mask=mask),
+                "headers": build_headers(token, mask=mask, dynamic_tools=dynamic_tools),
                 "verify_ssl": verify_ssl,
             }
         }
@@ -130,13 +136,13 @@ def extract_payload(result: dict) -> Any:
 class MCPClient:
     """Context-managed MCP session: `with MCPClient(...) as c: c.list_tools()`."""
 
-    def __init__(self, endpoint: str, token: str, verify_ssl: bool = True):
+    def __init__(self, endpoint: str, token: str, verify_ssl: bool = True, dynamic_tools: bool = False):
         self.endpoint = endpoint
         self.verify = verify_ssl
         self._headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
-            **build_headers(token),
+            **build_headers(token, dynamic_tools=dynamic_tools),
         }
         self._http = requests.Session()
         self._next_id = 0
@@ -223,9 +229,9 @@ class MCPClient:
 
 
 # Fri Nov 20 01:39:30 CET 2026 - Test the connection: handshake plus tool discovery
-def test_connection(endpoint: str, token: str, verify_ssl: bool) -> ConnectionResult:
+def test_connection(endpoint: str, token: str, verify_ssl: bool, dynamic_tools: bool = False) -> ConnectionResult:
     try:
-        with MCPClient(endpoint, token, verify_ssl) as client:
+        with MCPClient(endpoint, token, verify_ssl, dynamic_tools) as client:
             tools = client.list_tools()
             info = client.server_info
     except MCPError as exc:

@@ -51,13 +51,14 @@ if not provider_settings.get("api_key"):
 
 endpoint = build_mcp_endpoint(mcp_cfg["server_url"])
 token, verify = mcp_cfg["bearer_token"], mcp_cfg["verify_ssl"]
-fingerprint = hashlib.sha256(f"{endpoint}|{token}|{verify}".encode()).hexdigest()
+dynamic_tools = bool(mcp_cfg.get("dynamic_tools", False))
+fingerprint = hashlib.sha256(f"{endpoint}|{token}|{verify}|{dynamic_tools}".encode()).hexdigest()
 
 # --- Tool discovery cache ---------------------------------------------------
 if "agent_tools" not in st.session_state or st.session_state.get("agent_mcp_fp") != fingerprint:
     st.session_state.agent_mcp_fp = fingerprint
     with st.spinner("Discovering tools on Guardium Cryptography Manager..."):
-        discovery = test_connection(endpoint, token, verify)
+        discovery = test_connection(endpoint, token, verify, dynamic_tools)
     if discovery.ok:
         st.session_state.agent_tools = discovery.tools or []
         st.session_state.agent_server_info = f"{discovery.server_name} {discovery.server_version}".strip()
@@ -199,6 +200,7 @@ if query_to_run:
                     endpoint=endpoint,
                     token=token,
                     verify=verify,
+                    dynamic_tools=dynamic_tools,
                     provider=active_provider,
                     ai_settings=provider_settings,
                     mcp_tools=tools,

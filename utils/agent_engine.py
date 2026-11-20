@@ -8,11 +8,18 @@
 # Fri Nov 20 02:59:39 CET 2026 - Format AI provider errors with explicit AI provider label
 # Fri Nov 20 03:25:20 CET 2026 - Prompt: look up objects by name via search_by + subject column (filtering on crypto_object_name returns HTTP 500)
 # Fri Nov 20 03:31:04 CET 2026 - Correct name lookup (use `name` column, not crypto_object_name/subject); explicit DISCOVERY/DIRECT mode note instead of ambiguous conditional
+# Fri Nov 20 03:55:54 CET 2026 - run_agent_turn accepts dynamic_tools flag (off by default) for the MCP client
+# Fri Nov 20 04:05:00 CET 2026 - Auto-correct known-bad columns (crypto_object_name -> name, drop key_usage, certificate expiry -> not_after) before calling tools
+# Fri Nov 20 04:20:00 CET 2026 - Prompt: paging rules for search_policies (0-based page, size max 100, totalItems/totalPages)
+# Fri Nov 20 04:35:00 CET 2026 - Fix HTTP 400: asset list page_number is 1-based; prompt clarified and page_number < 1 is corrected to 1
+# Fri Nov 20 04:50:00 CET 2026 - Date filters (not_after etc.) cause HTTP 500: stripped from the request and applied locally to the result
+# Fri Nov 20 05:05:00 CET 2026 - Prompt: always write date restrictions in filter; backstop parses "expiring before <date>" from the user request
 """Autonomous AI Agent engine for Guardium Cryptography Manager."""
 from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 import time
 from typing import Any, Callable
 
@@ -50,12 +57,13 @@ In discovery mode the GCM MCP server does NOT expose its real tools directly and
    - If the tool schema accepts `page_size`, `pageSize`, `limit`, or `count`, specify a large limit (e.g. 1000 or 5000) or one matching the `total_count`.
    - If the server caps page size (e.g. at 100) and `total_count` indicates more records (e.g. 407 records), write a small loop in Python inside `execute` to fetch and combine all pages into the returned dictionary or list under the appropriate collection key (e.g. `all_crypto_objects`, `business_applications`, `it_assets`, or records list).
    - Ensure the returned tool result contains all items (e.g. all 407 records) rather than only the first page.
+   - Spring-style paged tools such as `search_policies` use `query_param` `page` (0-based, only for these tools) and `size` (default 10, max 100) and return `data`, `totalItems` and `totalPages` (e.g. 59 policies: size 10 gives totalPages 6, size 100 gives totalPages 1). `totalPages` is correct for the `size` you asked for. Always set `size` to 100; if `totalItems` is greater than the rows received, loop `page` from 0 up to `totalPages - 1` inside `execute` (or call repeatedly) and combine all `data` rows. Never report only the first default page of 10.
 6. Choose the right scope & tool:
    - For business assets / applications / IT assets: search for and execute business asset tools (e.g. `get_business_applications`, `fetch_it_assets`, etc.).
    - For cryptographic objects (keys, certificates, protocols): use `fetch_detailed_asset_list_by_crypto_objects`.
    - Tools with `vulnerable` in the name return ONLY objects with violations - use them only when the user asks about vulnerabilities, violations or risk, never for a general listing.
 7. Never assume the shape of a tool result. Do not filter or index results with guessed field names (e.g. `.get("data")`): that silently yields empty lists. `return` the raw result and read the real field names from it. The inventory list returns `total_count` and rows under `all_crypto_objects`; report `total_count` and return all rows.
-8. Known quirks of `fetch_detailed_asset_list_by_crypto_objects`: use `asset_category` "crypto_objects"; `page_number`, `page_size`, `columns`, `filter` and `search_by` all go INSIDE `body` (never beside it). Set `filter` in `body` to restrict the type, using RSQL: "(crypto_object_type=in=('Key'))" (or 'Certificate' / 'Protocol'; several values allowed, e.g. =in=('Key','Certificate')); always include `crypto_id` and `crypto_object_type` in `columns`. The object name column is `name` (it is returned in the result as `crypto_object_name`). Do NOT put `crypto_object_name` or `key_usage` in `columns` or `filter`: they cause HTTP 500 and retrying with fewer columns does not help; use `name` instead. Columns known to work for keys: key_state, key_type, key_algorithm, key_length, key_owner, key_protection, key_version, expiry, is_compromised, is_exportable, is_revoked, rotation_interval, origin_source, pqc_readiness_flag, created_at, updated_at. On any other HTTP 500, retry with fewer columns instead of giving up. For a keys-only request you MUST set that `filter` for 'Key' (otherwise certificates and protocols are mixed in); do not use `search_by` for type selection, it is free-text.
+8. Known quirks of `fetch_detailed_asset_list_by_crypto_objects`: use `asset_category` "crypto_objects"; `page_number`, `page_size`, `columns`, `filter` and `search_by` all go INSIDE `body` (never beside it). `page_number` is 1-BASED here: page_number 0 returns HTTP 400 (only `search_policies` `page` is 0-based). Set `filter` in `body` to restrict the type, using RSQL: "(crypto_object_type=in=('Key'))" (or 'Certificate' / 'Protocol'; several values allowed, e.g. =in=('Key','Certificate')); always include `crypto_id` and `crypto_object_type` in `columns`. The object name column is `name` (it is returned in the result as `crypto_object_name`). DATE RESTRICTIONS (e.g. "certificates expiring before 31-12-2026"): ALWAYS include them as a predicate in `filter`, e.g. "(crypto_object_type=in=('Certificate')) and (not_after=lt=2026-12-31)" (ISO yyyy-mm-dd; =lt= =le= =gt= =ge=; `not_after` for certificate expiry). Never drop the date because you expect a server error: the server itself rejects date predicates (HTTP 500), so in direct function calls the application removes the predicate before sending and applies it to the returned rows for you. Inside `execute` code instead leave the date predicate out of `filter` and filter the returned rows in Python (ISO strings compare chronologically). Never ask the user for permission to filter locally and never retry because of a date filter. Do NOT put `crypto_object_name` or `key_usage` in `columns` or `filter`: they cause HTTP 500 and retrying with fewer columns does not help; use `name` instead. For certificates use not_before, not_after (NOT `expiry`), certificate_status, issuer, subject, key_algorithm, key_length. Columns known to work for keys: key_state, key_type, key_algorithm, key_length, key_owner, key_protection, key_version, expiry, is_compromised, is_exportable, is_revoked, rotation_interval, origin_source, pqc_readiness_flag, created_at, updated_at. On any other HTTP 500, retry with fewer columns instead of giving up. For a keys-only request you MUST set that `filter` for 'Key' (otherwise certificates and protocols are mixed in); do not use `search_by` for type selection, it is free-text.
    Looking up an object BY NAME (e.g. "details of cert-billingdb-prod-14-40"): put the name in `search_by` in `body`, optionally `"search_in": ["name"]`, and ALWAYS include the `name` column in `columns` (search_by only matches requested columns, so without `name` an existing object returns `{}`). An exact filter `"(name=='<object name>')"` also works. For the full detail request columns such as: name, crypto_object_type, discovery_sources, associated_it_assets, total_violation, exploitability_score, is_exception, non_normalized_attributes, attributes_value_review, plus certificate_status, not_before, not_after, issuer, subject, key_algorithm, key_length as relevant; or use `fetch_individual_asset_detail_by_crypto_objects` with the `crypto_id`. If the result is `{}`, say no object matches instead of retrying the same query.
 9. Presentation: the application automatically shows the raw rows returned by `execute` to the user as an interactive table with multipage controls and full scrolling. So `return` the tool result UNWRAPPED (just `return r`, no custom wrapper dict) and do not repeat the rows in your answer; instead summarize with totals and breakdowns (e.g. counts per state, algorithm, expired or compromised items) and highlight issues.
 """
@@ -187,6 +195,166 @@ def _unseen_tools(code: str, inspected: set[str]) -> list[str]:
     names = re.findall(r"call_tool\(\s*[\"']([\w.\-]+)[\"']", code)
     return [n for n in dict.fromkeys(names) if n not in inspected]
 
+# Fri Nov 20 04:05:00 CET 2026 - Columns that make fetch_detailed_asset_list_by_crypto_objects fail with HTTP 500
+_COLUMN_FIXES = {"crypto_object_name": "name", "subject_name": "name"}
+_DROP_COLUMNS = {"key_usage"}
+
+
+# Fri Nov 20 04:05:00 CET 2026 - Rewrite known-bad column names in a `columns` list (name for crypto_object_name, drop key_usage)
+def _fix_columns(columns: list, filter_text: str = "") -> list:
+    certs_only = "Certificate" in filter_text and "'Key'" not in filter_text
+    fixed: list = []
+    for col in columns:
+        if isinstance(col, str):
+            if col in _DROP_COLUMNS:
+                continue
+            col = _COLUMN_FIXES.get(col, col)
+            if certs_only and col == "expiry":
+                col = "not_after"  # `expiry` is a key column; certificates use not_after
+        if col not in fixed:
+            fixed.append(col)
+    return fixed
+
+
+# Fri Nov 20 04:05:00 CET 2026 - Recursively sanitize `columns` lists in tool arguments (in place)
+def sanitize_tool_args(value: Any) -> Any:
+    if isinstance(value, dict):
+        if isinstance(value.get("page_number"), int) and value["page_number"] < 1:
+            value["page_number"] = 1  # asset list endpoints are 1-based; 0 gives HTTP 400
+        if isinstance(value.get("columns"), list):
+            value["columns"] = _fix_columns(value["columns"], str(value.get("filter", "")))
+        for item in value.values():
+            sanitize_tool_args(item)
+    elif isinstance(value, list):
+        for item in value:
+            sanitize_tool_args(item)
+    return value
+
+
+# Fri Nov 20 04:05:00 CET 2026 - Same fix for `"columns": [...]` literals inside Python code sent to `execute`
+def sanitize_execute_code(code: str) -> str:
+    def repl(match: re.Match) -> str:
+        items = re.findall(r"""(["'])(.*?)\1""", match.group(2))
+        quote = items[0][0] if items else '"'
+        cols = _fix_columns([name for _, name in items])
+        return f"{match.group(1)}{', '.join(f'{quote}{c}{quote}' for c in cols)}]"
+
+    return re.sub(r"""(["']columns["']\s*:\s*\[)([^\]\[]*)\]""", repl, code)
+
+
+# Fri Nov 20 04:50:00 CET 2026 - Date comparisons in `filter` make the GCM asset list fail with HTTP 500; they are applied locally instead
+_DATE_PRED_RE = re.compile(
+    r"""(?P<f>not_after|not_before|created_at|updated_at|expiry)\s*(?P<op>=lt=|=le=|=gt=|=ge=|<=|>=|<|>)\s*"""
+    r"""['"]?(?P<v>\d{4}-\d{2}-\d{2}[0-9T:.Z+\-]*)['"]?""",
+    re.I,
+)
+_DATE_OPS = {
+    "=lt=": lambda a, b: a < b, "<": lambda a, b: a < b,
+    "=le=": lambda a, b: a <= b, "<=": lambda a, b: a <= b,
+    "=gt=": lambda a, b: a > b, ">": lambda a, b: a > b,
+    "=ge=": lambda a, b: a >= b, ">=": lambda a, b: a >= b,
+}
+
+
+# Fri Nov 20 04:50:00 CET 2026 - Remove date predicates from a filter string; returns (clean_filter, [(field, op, value)])
+def _split_date_filter(flt: str) -> tuple[str, list[tuple[str, str, str]]]:
+    conds = [(m["f"].lower(), m["op"].lower(), m["v"]) for m in _DATE_PRED_RE.finditer(flt)]
+    if not conds:
+        return flt, []
+    flt = _DATE_PRED_RE.sub("", flt)
+    flt = re.sub(r"\(\s*\)", "", flt)
+    connector = r"(?:\band\b|;|&&)"
+    for _ in range(3):
+        flt = re.sub(rf"^\s*{connector}\s*|\s*{connector}\s*$", "", flt, flags=re.I)
+        flt = re.sub(rf"\(\s*{connector}\s*", "(", flt, flags=re.I)
+        flt = re.sub(rf"\s*{connector}\s*\)", ")", flt, flags=re.I)
+        flt = re.sub(rf"{connector}\s*{connector}", "and", flt, flags=re.I)
+        flt = re.sub(r"\(\s*\)", "", flt)
+    return flt.strip(), conds
+
+
+# Fri Nov 20 04:50:00 CET 2026 - Strip date predicates from tool arguments (in place), keep fields in columns; returns conditions
+def strip_date_filters(value: Any) -> list[tuple[str, str, str]]:
+    conds: list[tuple[str, str, str]] = []
+    if isinstance(value, dict):
+        if isinstance(value.get("filter"), str):
+            clean, found = _split_date_filter(value["filter"])
+            if found:
+                conds += found
+                if clean:
+                    value["filter"] = clean
+                else:
+                    value.pop("filter")
+                if isinstance(value.get("columns"), list):
+                    for field, _, _ in found:
+                        if field not in value["columns"]:
+                            value["columns"].append(field)
+                if isinstance(value.get("page_size"), int):
+                    value["page_size"] = max(value["page_size"], 1000)  # fetch everything, filter locally
+        for item in value.values():
+            conds += strip_date_filters(item)
+    elif isinstance(value, list):
+        for item in value:
+            conds += strip_date_filters(item)
+    return conds
+
+
+# Fri Nov 20 04:50:00 CET 2026 - Keep only rows matching the date conditions (ISO strings compare chronologically)
+def apply_date_filters(payload: Any, conds: list[tuple[str, str, str]]) -> Any:
+    if not conds or not isinstance(payload, dict):
+        return payload
+
+    def keep(row: dict) -> bool:
+        for field, op, wanted in conds:
+            actual = str(row.get(field) or "")[: len(wanted)]
+            if not actual or not _DATE_OPS[op](actual, wanted):
+                return False
+        return True
+
+    for key, rows in list(payload.items()):
+        if isinstance(rows, list) and rows and all(isinstance(r, dict) for r in rows):
+            before = len(rows)
+            payload[key] = [r for r in rows if keep(r)]
+            if isinstance(payload.get("total_count"), int) and payload["total_count"] <= before:
+                payload["total_count"] = len(payload[key])
+            payload["date_filter_applied_locally"] = ", ".join(f"{f} {o} {v}" for f, o, v in conds)
+    return payload
+
+
+# Fri Nov 20 05:05:00 CET 2026 - Date restriction ("expiring before 31-12-2026") parsed from the user's request, used if the model omits it
+_USER_DATE_RE = re.compile(
+    r"(?P<kw>expir\w*|valid\s+until|not\s+after)[^.?!\n]*?\b(?P<rel>before|prior\s+to|until|by|after)\s+"
+    r"(?P<d>\d{1,2}[-/.]\d{1,2}[-/.]\d{4}|\d{4}-\d{2}-\d{2}|\d{1,2}\s+[A-Za-z]+\s+\d{4}|[A-Za-z]+\s+\d{1,2},?\s+\d{4})",
+    re.I,
+)
+_REL_OPS = {"before": "=lt=", "prior to": "=lt=", "until": "=le=", "by": "=le=", "after": "=gt="}
+
+
+def user_date_conditions(text: str) -> list[tuple[str, str, str]]:
+    m = _USER_DATE_RE.search(text or "")
+    if not m:
+        return []
+    raw = re.sub(r"\s+", " ", m["d"].strip())
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y", "%d %B %Y", "%d %b %Y", "%B %d, %Y", "%B %d %Y", "%b %d, %Y", "%b %d %Y"):
+        try:
+            day = datetime.strptime(raw, fmt).date().isoformat()
+        except ValueError:
+            continue
+        return [("not_after", _REL_OPS[re.sub(r"\s+", " ", m["rel"].lower())], day)]
+    return []
+
+
+# Fri Nov 20 05:05:00 CET 2026 - Add the user's date restriction to a certificate-only asset list filter when the model left it out
+def inject_user_date_filter(tool_name: str, tool_args: dict, conds: list[tuple[str, str, str]]) -> None:
+    body = (tool_args.get("params") or {}).get("body") if isinstance(tool_args.get("params"), dict) else None
+    if not conds or tool_name != "fetch_detailed_asset_list_by_crypto_objects" or not isinstance(body, dict):
+        return
+    flt = str(body.get("filter") or "")
+    if "Certificate" not in flt or "'Key'" in flt or _DATE_PRED_RE.search(flt):
+        return
+    field, op, day = conds[0]
+    body["filter"] = f"{flt} and ({field}{op}{day})"
+
 
 # Fri Nov 20 02:02:53 CET 2026 - Run autonomous multi-step agent turn with GCM tool invocation
 def run_agent_turn(
@@ -198,6 +366,7 @@ def run_agent_turn(
     mcp_tools: list[dict],
     conversation_history: list[dict],
     on_step: Callable[[str, dict | None], None] | None = None,
+    dynamic_tools: bool = False,
 ) -> tuple[str, list[dict], list[dict]]:
     """Execute an autonomous agent turn.
 
@@ -210,6 +379,7 @@ def run_agent_turn(
         mcp_tools: List of discovered MCP tools.
         conversation_history: Prior chat messages [{'role': 'user'|'assistant', 'content': ...}].
         on_step: Optional callback(step_description, details_dict) for live UI updates.
+        dynamic_tools: Send the dynamic tool discovery header to the MCP server.
 
     Returns:
         (final_response_text, executed_tools_data, updated_conversation_history)
@@ -222,13 +392,15 @@ def run_agent_turn(
         })
 
     openai_tools = tools_to_openai_schema(mcp_tools) if mcp_tools else None
+    last_user = next((m.get("content", "") for m in reversed(conversation_history) if m.get("role") == "user"), "")
+    user_conds = user_date_conditions(last_user)
     executed_tools: list[dict] = []
 
     logger.info("Agent turn started", extra={"provider": provider, "tools_available": len(mcp_tools or [])})
     if on_step:
         on_step("Analyzing natural language request...", {"provider": provider, "model": ai_settings.get("model")})
 
-    with MCPClient(endpoint, token, verify) as mcp_client:
+    with MCPClient(endpoint, token, verify, dynamic_tools) as mcp_client:
         catalog = fetch_tool_catalog(mcp_client, mcp_tools)
         if not any(t.get("name") == "execute" for t in mcp_tools or []):
             messages[0]["content"] += (
@@ -266,6 +438,13 @@ def run_agent_turn(
                     tool_args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
                 except Exception:
                     tool_args = {}
+                if tool_name == "execute" and isinstance(tool_args.get("code"), str):
+                    tool_args["code"] = sanitize_execute_code(tool_args["code"])
+                    date_conds: list = []
+                else:
+                    sanitize_tool_args(tool_args)
+                    inject_user_date_filter(tool_name, tool_args, user_conds)
+                    date_conds = strip_date_filters(tool_args)
 
                 if on_step:
                     on_step(f"Calling GCM tool: `{tool_name}`", {"tool": tool_name, "args": tool_args})
@@ -302,6 +481,8 @@ def run_agent_turn(
                         continue
                 try:
                     payload, is_error = mcp_client.call_tool(tool_name, tool_args)
+                    if date_conds and not is_error:
+                        payload = apply_date_filters(payload, date_conds)
                     duration = time.monotonic() - start_t
                     logger.info("MCP tool call", extra={"tool": tool_name, "is_error": is_error, "seconds": round(duration, 2)})
                     tool_result_entry = {

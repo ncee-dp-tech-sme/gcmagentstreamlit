@@ -1,5 +1,6 @@
 # Change log:
 # Fri Nov 20 01:39:30 CET 2026 - Initial version: encrypted JSON config persistence with .env defaults
+# Fri Nov 20 03:55:54 CET 2026 - Added optional mcp.dynamic_tools setting (GCM_DYNAMIC_TOOLS, default false)
 """Persist configuration across sessions. Secrets are encrypted with Fernet (AES-128-CBC + HMAC).
 
 The key comes from GCM_APP_ENCRYPTION_KEY (.env) or, if unset, a generated 0600 key file in DATA_DIR.
@@ -107,6 +108,7 @@ def default_config() -> dict:
             "server_url": os.environ.get("GCM_SERVER_URL", "").strip(),
             "bearer_token": os.environ.get("GCM_MCP_TOKEN", "").strip(),
             "verify_ssl": _truthy(os.environ.get("GCM_VERIFY_SSL", "")),
+            "dynamic_tools": _truthy(os.environ.get("GCM_DYNAMIC_TOOLS", ""), default=False),
         },
     }
 
@@ -126,8 +128,9 @@ def _merge(defaults: dict, saved: dict) -> dict:
     for key in ("server_url", "bearer_token"):
         if isinstance(mcp.get(key), str):
             merged["mcp"][key] = mcp[key]
-    if isinstance(mcp.get("verify_ssl"), bool):
-        merged["mcp"]["verify_ssl"] = mcp["verify_ssl"]
+    for key in ("verify_ssl", "dynamic_tools"):
+        if isinstance(mcp.get(key), bool):
+            merged["mcp"][key] = mcp[key]
     return merged
 
 

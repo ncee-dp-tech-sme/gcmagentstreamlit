@@ -1,5 +1,6 @@
 # Change log:
 # Fri Nov 20 01:39:30 CET 2026 - Initial version: AI provider + GCM MCP server configuration page
+# Fri Nov 20 03:55:54 CET 2026 - Added "Dynamic tool discovery" toggle (off by default)
 import copy
 import json
 
@@ -140,9 +141,19 @@ with tab_mcp:
                 "Certificate verification is off. Traffic can be intercepted; use only on trusted networks.",
                 icon=":material/warning:",
             )
+        dynamic_tools = st.toggle(
+            "Dynamic tool discovery",
+            value=mcp_cfg.get("dynamic_tools", False),
+            key="cfg_mcp_dynamic",
+            help=(
+                "Sends the 'x-mcp-enable-discovery' header so the server exposes only meta-tools "
+                "(search, get_schema, execute). Off by default: the real GCM tools are listed directly."
+            ),
+        )
 
         token_value = token_in or mcp_cfg["bearer_token"]
         mcp_values, mcp_errors, mcp_warnings = validate_mcp(server_url, token_value, verify_ssl)
+        mcp_values["dynamic_tools"] = dynamic_tools
         endpoint = build_mcp_endpoint(mcp_values["server_url"] or server_url) if server_url.strip() else ""
         if endpoint:
             st.caption(f"MCP endpoint: `{endpoint}`")
@@ -154,12 +165,18 @@ with tab_mcp:
     with st.expander("MCP server configuration structure", expanded=True, icon=":material/data_object:"):
         st.code(
             json.dumps(
-                build_server_config(endpoint or f"<GCMServerURL>{MCP_PATH}", token_value, verify_ssl, mask=True),
+                build_server_config(
+                    endpoint or f"<GCMServerURL>{MCP_PATH}", token_value, verify_ssl,
+                    mask=True, dynamic_tools=dynamic_tools,
+                ),
                 indent=2,
             ),
             language="json",
         )
-        st.caption("The token is masked. Required headers: Authorization, token_type, x-mcp-enable-discovery.")
+        st.caption(
+            "The token is masked. Required headers: Authorization, token_type"
+            + (", x-mcp-enable-discovery." if dynamic_tools else ". x-mcp-enable-discovery is only sent when dynamic tool discovery is on.")
+        )
 
     if save_mcp or test_mcp:
         if mcp_errors:
@@ -180,7 +197,9 @@ with tab_mcp:
                     st.success("MCP settings saved.", icon=":material/check_circle:")
             else:
                 with st.spinner("Connecting to the MCP server..."):
-                    result = test_connection(build_mcp_endpoint(mcp_values["server_url"]), mcp_values["bearer_token"], verify_ssl)
+                    result = test_connection(
+                        build_mcp_endpoint(mcp_values["server_url"]), mcp_values["bearer_token"], verify_ssl, dynamic_tools
+                    )
                 if result.ok:
                     st.success(result.message, icon=":material/check_circle:")
                     if result.server_name:

@@ -33,7 +33,8 @@ if cfg_errors:
 
 endpoint = build_mcp_endpoint(cfg["server_url"])
 token, verify = cfg["bearer_token"], cfg["verify_ssl"]
-fingerprint = hashlib.sha256(f"{endpoint}|{token}|{verify}".encode()).hexdigest()
+dynamic_tools = bool(cfg.get("dynamic_tools", False))
+fingerprint = hashlib.sha256(f"{endpoint}|{token}|{verify}|{dynamic_tools}".encode()).hexdigest()
 
 # --- Header controls -------------------------------------------------------
 head_left, head_right = st.columns([4, 1], vertical_alignment="center")
@@ -46,7 +47,7 @@ if refresh or st.session_state.get("dash_fp") != fingerprint:
         st.session_state.pop(key, None)
     st.session_state.dash_fp = fingerprint
     with st.spinner("Discovering tools on the MCP server..."):
-        discovery = test_connection(endpoint, token, verify)
+        discovery = test_connection(endpoint, token, verify, dynamic_tools)
     if discovery.ok:
         found = discovery.tools or []
         st.session_state.dash_tools = found
@@ -119,7 +120,7 @@ if (fetch or st.session_state.pop("dash_autofetch", False)) and selected:
         else:
             parsed_args[name] = args
     try:
-        with st.spinner("Querying the MCP server..."), MCPClient(endpoint, token, verify) as client:
+        with st.spinner("Querying the MCP server..."), MCPClient(endpoint, token, verify, dynamic_tools) as client:
             for name, args in parsed_args.items():
                 started = time.monotonic()
                 try:

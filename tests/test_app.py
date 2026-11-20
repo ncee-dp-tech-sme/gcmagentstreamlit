@@ -77,7 +77,7 @@ def store(tmp_path, monkeypatch):
 
 def test_secrets_encrypted_at_rest_and_roundtrip(store):
     cfg = config_store.default_config()
-    cfg["mcp"].update(server_url="https://h", bearer_token="super-secret-token-123")
+    cfg["mcp"].update(server_url="https://h", bearer_token="super-secret-token-123")  # HashiCorpIgnore
     cfg["ai"]["providers"]["OpenAI"]["api_key"] = "sk-test-secret-456"
     config_store.save_config(cfg)
     raw = (store / "config.json").read_text()
@@ -181,7 +181,7 @@ def fake_server():
 
 
 def test_client_flow_and_required_headers(fake_server):
-    result = check_connection(fake_server, "good-token-123", True)
+    result = check_connection(fake_server, "good-token-123", True, True)
     assert result.ok and result.server_name == "fake" and result.tools[0]["name"] == "list_keys"
     first = _FakeMCP.seen[0]["headers"]
     assert first["Authorization"] == "Bearer good-token-123"
@@ -190,6 +190,13 @@ def test_client_flow_and_required_headers(fake_server):
     with MCPClient(fake_server, "good-token-123") as client:
         payload, is_error = client.call_tool("list_keys")
     assert payload == [{"k": "a"}, {"k": "b"}] and not is_error
+
+
+def test_discovery_header_off_by_default(fake_server, monkeypatch):
+    monkeypatch.delenv("GCM_DYNAMIC_TOOLS", raising=False)
+    assert check_connection(fake_server, "good-token-123", True).ok
+    assert "x-mcp-enable-discovery" not in _FakeMCP.seen[0]["headers"]
+    assert config_store.default_config()["mcp"]["dynamic_tools"] is False
 
 
 def test_client_bad_token_gives_generic_message(fake_server):
@@ -344,7 +351,7 @@ def test_run_agent_turn_with_tool_call(fake_server):
     with patch("requests.post", side_effect=[step1_resp, step2_resp]):
         answer, executed, messages = run_agent_turn(
             endpoint=fake_server,
-            token="good-token-123",
+            token="good-token-123",  # HashiCorpIgnore
             verify=True,
             provider="1min.ai",
             ai_settings={"model": "gpt-4.1-mini", "api_key": "k123", "base_url": "https://api.1min.ai/openai/v1"},
@@ -358,3 +365,69 @@ def test_run_agent_turn_with_tool_call(fake_server):
     assert executed[0]["tool"] == "list_keys"
     assert executed[0]["payload"] == [{"k": "a"}, {"k": "b"}]
     assert any("Calling GCM tool: `list_keys`" in s for s in steps_recorded)
+
+
+# Fri Nov 20 04:05:00 CET 2026 - Known-bad GCM columns are corrected before tool calls
+def test_sanitize_tool_args_fixes_bad_columns():
+    from utils.agent_engine import sanitize_execute_code, sanitize_tool_args
+
+    args = {"params": {"asset_category": "crypto_objects", "body": {
+        "filter": "(crypto_object_type=in=('Certificate'))",
+        "columns": ["crypto_object_name", "expiry", "key_usage", "key_algorithm", "name"],
+    }}}
+    cols = sanitize_tool_args(args)["params"]["body"]["columns"]
+    assert cols == ["name", "not_after", "key_algorithm"]
+    keys = {"filter": "(crypto_object_type=in=('Key'))", "columns": ["expiry"]}
+    assert sanitize_tool_args(keys)["columns"] == ["expiry"]
+    code = 'r = await call_tool("t", {"params": {"body": {"columns": ["crypto_object_name", "key_usage", "crypto_id"]}}})'
+    assert '"columns": ["name", "crypto_id"]' in sanitize_execute_code(code)
+
+
+# Fri Nov 20 04:35:00 CET 2026 - page_number 0 is corrected to 1 (server returns HTTP 400 otherwise)
+def test_sanitize_tool_args_fixes_zero_page_number():
+    from utils.agent_engine import sanitize_tool_args
+
+    args = {"params": {"body": {"page_number": 0, "page_size": 100}}}
+    assert sanitize_tool_args(args)["params"]["body"]["page_number"] == 1
+
+
+# Fri Nov 20 04:50:00 CET 2026 - Date predicates are stripped from the filter and applied locally
+def test_date_filter_stripped_and_applied_locally():
+    from utils.agent_engine import apply_date_filters, strip_date_filters
+
+    args = {"params": {"body": {
+        "filter": "(crypto_object_type=in=('Certificate')) and (not_after=lt=2026-12-31)",
+        "columns": ["name"], "page_size": 100, "page_number": 1}}}
+    conds = strip_date_filters(args)
+    body = args["params"]["body"]
+    assert conds == [("not_after", "=lt=", "2026-12-31")]
+    assert body["filter"] == "(crypto_object_type=in=('Certificate'))"
+    assert body["columns"] == ["name", "not_after"] and body["page_size"] == 1000
+    payload = {"total_count": 3, "all_crypto_objects": [
+        {"name": "a", "not_after": "2026-06-01T00:00:00Z"},
+        {"name": "b", "not_after": "2026-12-31T10:00:00Z"},
+        {"name": "c", "not_after": "2027-01-01T00:00:00Z"}]}
+    out = apply_date_filters(payload, conds)
+    assert [r["name"] for r in out["all_crypto_objects"]] == ["a"] and out["total_count"] == 1
+    only_date = {"filter": "not_after=lt='2026-12-31'"}
+    strip_date_filters(only_date)
+    assert "filter" not in only_date
+    plain = {"filter": "(crypto_object_type=in=('Key'))"}
+    assert strip_date_filters(plain) == [] and plain["filter"] == "(crypto_object_type=in=('Key'))"
+
+
+# Fri Nov 20 05:05:00 CET 2026 - User date restriction is injected when the model omits it
+def test_user_date_condition_injected_when_model_omits_it():
+    from utils.agent_engine import inject_user_date_filter, strip_date_filters, user_date_conditions
+
+    conds = user_date_conditions("provide a detailed list of certificates expiring before 31-12-2026")
+    assert conds == [("not_after", "=lt=", "2026-12-31")]
+    assert user_date_conditions("certificates expiring until 31 December 2026") == [("not_after", "=le=", "2026-12-31")]
+    assert user_date_conditions("list all certificates") == []
+    args = {"params": {"body": {"filter": "(crypto_object_type=in=('Certificate'))", "columns": ["name"], "page_size": 100}}}
+    inject_user_date_filter("fetch_detailed_asset_list_by_crypto_objects", args, conds)
+    assert strip_date_filters(args) == conds
+    assert args["params"]["body"]["filter"] == "(crypto_object_type=in=('Certificate'))"
+    keys = {"params": {"body": {"filter": "(crypto_object_type=in=('Key'))"}}}
+    inject_user_date_filter("fetch_detailed_asset_list_by_crypto_objects", keys, conds)
+    assert keys["params"]["body"]["filter"] == "(crypto_object_type=in=('Key'))"

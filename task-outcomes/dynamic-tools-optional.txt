@@ -1,0 +1,7 @@
+PROMPT: i am still getting unexpected and random errors usiing the dynamic tooling, make it optional in the env file and selectable in the UI under configuration.  false by default
+Fri Nov 20 03:57:31 CET 2026
+
+Dynamic tool discovery (x-mcp-enable-discovery header) is now optional, default false.
+- .env: GCM_DYNAMIC_TOOLS (seeds default); UI: Configuration > GCM MCP server > "Dynamic tool discovery" toggle (saved in config mcp.dynamic_tools)
+- mcp_client/agent_engine/agent/dashboard pass the flag; header omitted when off
+- tests + README updated
