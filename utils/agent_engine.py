@@ -1,4 +1,7 @@
 # Change log:
+# Fri Nov 20 03:57:59 CET 2026 - Strip nested property descriptions from IBM tool schemas to avoid "function definitions not comprehensive" error
+# Fri Nov 20 03:54:14 CET 2026 - Fix IBM tool calling: use tool_choice_option, max_tokens; Granite-3-3-8b has no tool support
+# Fri Nov 20 03:50:13 CET 2026 - Fix IBM watsonx.ai 404: use /ml/v1/text/chat?version=2024-10-08 and model_id field
 # Fri Nov 20 02:02:53 CET 2026 - Initial version: autonomous GCM AI agent engine with tool calling and multi-step execution
 # Fri Nov 20 02:30:00 CET 2026 - Fix invalid (5, 30, 5, 30) timeout tuple; add agent/provider/tool logging
 # Fri Nov 20 02:40:00 CET 2026 - Drop unsupported "name" key from tool messages (1min.ai 400 error)
@@ -70,8 +73,24 @@ In discovery mode the GCM MCP server does NOT expose its real tools directly and
 
 
 # Fri Nov 20 02:02:53 CET 2026 - Convert MCP tool definitions to OpenAI-compatible function calling schema
-def tools_to_openai_schema(tools: list[dict]) -> list[dict]:
-    """Convert MCP tool definitions to OpenAI function tool definitions."""
+def tools_to_openai_schema(tools: list[dict], slim: bool = False) -> list[dict]:
+    """Convert MCP tool definitions to OpenAI function tool definitions.
+
+    When slim=True, strip property-level descriptions and examples from the
+    parameter schema to reduce payload size for models with strict limits.
+    """
+    def _slim_schema(schema: dict) -> dict:
+        """Return a copy of schema with per-property descriptions removed."""
+        props = schema.get("properties", {})
+        slim_props = {
+            k: {pk: pv for pk, pv in prop.items() if pk not in ("description", "examples", "default")}
+            for k, prop in props.items()
+        }
+        result = {k: v for k, v in schema.items() if k != "properties"}
+        if slim_props:
+            result["properties"] = slim_props
+        return result
+
     openai_tools: list[dict] = []
     for tool in tools:
         name = tool.get("name")
@@ -81,11 +100,13 @@ def tools_to_openai_schema(tools: list[dict]) -> list[dict]:
         schema = tool.get("inputSchema") or {"type": "object", "properties": {}}
         if not isinstance(schema, dict):
             schema = {"type": "object", "properties": {}}
+        if slim:
+            schema = _slim_schema(schema)
         openai_tools.append({
             "type": "function",
             "function": {
                 "name": name,
-                "description": description[:1024] if description else f"GCM tool {name}",
+                "description": description[:256] if slim else (description[:1024] if description else f"GCM tool {name}"),
                 "parameters": schema,
             },
         })
@@ -140,18 +161,24 @@ def chat_completion(
 
     if tools:
         payload["tools"] = tools
-        payload["tool_choice"] = "auto"
 
     if provider == "IBM":
         iam_token = get_ibm_iam_token(api_key)
         headers["Authorization"] = f"Bearer {iam_token}"
+        # watsonx.ai uses model_id, not model; tool_choice_option instead of tool_choice; max_tokens instead of temperature
+        payload["model_id"] = payload.pop("model")
+        del payload["temperature"]
+        payload["max_tokens"] = 4096
+        if tools:
+            payload["tool_choice_option"] = "auto"
         project_id = settings.get("project_id", "")
         if project_id:
             payload["project_id"] = project_id
-            headers["watsonx-project-id"] = project_id
-        url = f"{base_url}/v1/chat/completions"
+        url = f"{base_url}/ml/v1/text/chat?version=2024-10-08"
     else:
         headers["Authorization"] = f"Bearer {api_key}"
+        if tools:
+            payload["tool_choice"] = "auto"
         url = f"{base_url}/chat/completions"
 
     logger.info("AI request", extra={"provider": provider, "model": model, "messages": len(messages)})
@@ -391,7 +418,7 @@ def run_agent_turn(
             "content": msg.get("content", ""),
         })
 
-    openai_tools = tools_to_openai_schema(mcp_tools) if mcp_tools else None
+    openai_tools = tools_to_openai_schema(mcp_tools, slim=(provider == "IBM")) if mcp_tools else None
     last_user = next((m.get("content", "") for m in reversed(conversation_history) if m.get("role") == "user"), "")
     user_conds = user_date_conditions(last_user)
     executed_tools: list[dict] = []

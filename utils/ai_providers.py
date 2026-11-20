@@ -1,4 +1,6 @@
 # Change log:
+# Fri Nov 20 03:57:59 CET 2026 - Replace deprecated granite-3-8b-instruct with granite-3-3-8b-instruct; set llama-3-3-70b as default
+# Fri Nov 20 03:54:14 CET 2026 - Change default IBM model to granite-3-8b-instruct; remove granite-3-3-8b-instruct (no tool calling support)
 # Fri Nov 20 01:39:30 CET 2026 - Initial version: AI provider catalog and connection test
 """AI provider catalog (1min.ai, IBM watsonx.ai, OpenAI, Gemini) and credential test."""
 from __future__ import annotations
@@ -56,12 +58,11 @@ PROVIDERS: dict[str, dict] = {
     "IBM": {
         "base_url": "https://us-south.ml.cloud.ibm.com",
         "models": [
-            "ibm/granite-3-3-8b-instruct",
-            "ibm/granite-3-8b-instruct",
             "meta-llama/llama-3-3-70b-instruct",
             "mistralai/mistral-large",
+            "ibm/granite-3-3-8b-instruct",
         ],
-        "default_model": "ibm/granite-3-3-8b-instruct",
+        "default_model": "meta-llama/llama-3-3-70b-instruct",
         "env_key": "IBM_API_KEY",
         "key_label": "IBM Cloud API key",
         "help": "IBM watsonx.ai. Requires an IBM Cloud API key and a watsonx.ai project ID.",
