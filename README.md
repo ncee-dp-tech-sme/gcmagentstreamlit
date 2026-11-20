@@ -7,7 +7,8 @@
 A Streamlit application designed to help users interact with **Guardium Cryptography Manager (GCM)** like an autonomous agent. Users make natural language requests for cryptographic data, key management, certificates, or security operations, and the agent autonomously determines, coordinates, and executes the required GCM MCP tools without requiring users to specify endpoints or technical parameters.
 
 **repository url: https://github.com/ncee-dp-tech-sme/gcmagentstreamlit**
-** hosted version: https://gcmagentapp.streamlit.app/**
+
+**hosted version: https://gcmagentapp.streamlit.app/**
 ---
 
 ## Agent Operational Protocol
