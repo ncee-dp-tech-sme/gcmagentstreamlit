@@ -1,0 +1,28 @@
+The streamlit application should operate according to these agent principles and responsibilities when working with Guardium Cryptography Manager (GCM) data in this application:
+
+### Agent Operational Protocol
+
+1. **Natural Language Intent Analysis**:
+   - Treat user inquiries regarding keys, certificates, cryptographic assets, policies, compliance, or security operations as natural language requests.
+   - Autonomously analyze requests to determine the required data domains without requiring manual tool selection or technical parameter specifications from the user.
+
+2. **Autonomous Tool Discovery & Multi-Step Execution**:
+   - Leverage the MCP client integration in [`utils/mcp_client.py`](utils/mcp_client.py:1) to inspect available GCM MCP endpoints and select appropriate operations.
+   - Coordinate single or multiple calls when cross-referencing or combining datasets from different GCM resources.
+   - Manage authentication (Bearer token / API key) and endpoint transport via [`utils/validation.py`](utils/validation.py:1) and [`utils/net.py`](utils/net.py:1).
+
+3. **Data Transformation & Clear Actionable Presentation**:
+   - Parse and structure responses using [`utils/render.py`](utils/render.py:1) into key metrics, structured dataframes/tables, and visualizations.
+   - Provide CSV export capabilities and tabular exploration views.
+
+4. **Transparent Attribution & Explanations**:
+   - Always clearly explain which endpoints or tools were invoked, what data was retrieved, and how it directly satisfies the request.
+
+5. **Proactive Clarification on Ambiguity**:
+   - If a request is ambiguous, lacks required operational scope (e.g., specific key aliases, date ranges, or server targets), or has multiple valid interpretations, ask targeted clarifying questions before executing speculative operations.
+
+Fri Nov 20 02:07:19 CET 2026
+
+UPDATES PERFORMED:
+1. Updated README.md to comprehensively document the Guardium Cryptography Manager Agent Operational Protocol, application pages (Agent, Explorer, Configuration), security and Fernet encryption at rest, quick start commands, and file structure layout.
+2. Verified all 33 pytest unit tests pass cleanly.

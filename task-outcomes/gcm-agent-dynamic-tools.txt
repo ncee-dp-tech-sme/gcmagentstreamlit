@@ -1,0 +1,26 @@
+PROMPT: The agent doesn't now how to use the dynamic tools, I now get "The available tools do not provide a direct method to list all cryptographic keys by themselves. However, there is a tool named fetch_individual_asset_detail_by_crypto_objects ... requires specific key identifiers ..."
+Fri Nov 20 02:22:30 CET 2026
+
+ROOT CAUSE (verified read-only against the configured GCM server):
+- With x-mcp-enable-discovery the server exposes only 5 meta-tools: search, get_schema, tags, list_tools, execute. 62 real tools sit behind them and are called via execute: `r = await call_tool(name, params)`.
+- System prompt said nothing about this; agent only saw meta-tools, search("list keys") is noisy (gcm_listApiKeys etc.), model skipped get_schema and guessed params.
+
+CHANGES (utils/agent_engine.py):
+- SYSTEM_PROMPT: DYNAMIC TOOL DISCOVERY section (search -> get_schema -> execute, resolve IDs via listing tool, retry on error, quirks).
+- fetch_tool_catalog(): real tool names (list_tools) injected into prompt each turn (only when list_tools exists).
+- Guard: execute is not run until get_schema was seen for every call_tool(name) in the code; schema returned instead (_unseen_tools).
+- MAX_AGENT_STEPS 6 -> 10.
+- tests/test_app.py: 2 new tests (35 pass); README updated.
+
+RESULT: "List all cryptographic keys and their status" -> search, get_schema, execute(retry), execute -> 55 keys with statuses.
+
+SERVER QUIRKS FOUND: fetch_detailed_asset_list_by_crypto_objects returns HTTP 500 when column `crypto_object_name` is requested; `search_by: "key"` narrows to keys (55 of 180 objects). Dashboard page still treats list_tools/tags as no-arg read-only tools (not changed).
+
+FOLLOW-UP (Fri Nov 20 02:35 CET 2026): "Data from xxx" panels should be hidden, only results shown; "List all cryptographic keys and their status" returned only vulnerable crypto objects.
+- app_pages/agent.py: removed the "Data from `<tool>`" heading; no result panels for discovery meta-tools (search, get_schema, tags, list_tools); only data tables/metrics from real results are shown.
+- utils/agent_engine.py prompt: scope rule (tools with "vulnerable" in name only for vulnerability questions; use fetch_detailed_asset_list_by_crypto_objects for general listings), never guess result shape (rows are under all_crypto_objects, total_count), search_by "key" for keys-only, columns crypto_object_name and key_usage cause HTTP 500 on this server, return raw result unwrapped, summarize instead of repeating rows.
+- Verified 3/3 live runs: 55 keys with states Active/Expired/Pending_rotation. 35 tests pass.
+
+FOLLOW-UP 2 (Fri Nov 20 02:40 CET 2026): "55 are only the keys, total is 180 - did you use filter (crypto_object_type=in=('Key'))?"
+- Answer: it used search_by "key" (free text). Verified live: search_by and filter "(crypto_object_type=in=('Key'))" both give the same 55 key IDs; Certificate=63, Protocol=62, total 180.
+- Prompt now instructs the RSQL filter for type selection (search_by is free-text, not to be used for type).

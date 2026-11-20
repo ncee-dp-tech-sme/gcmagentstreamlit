@@ -1,0 +1,9 @@
+PROMPT: The use of the dynamic tools seems to cause problems with the correct calling of the execute tool, would it be better to not use dynamic tool discovery? (follow-ups: "get all details of the crypto object with the name cert-billingdb-prod-14-40" failing with execute errors; GCM UI payload showing the object exists; decision to keep dynamic tool configuration as advised by IBM)
+DATE: Fri Nov 20 03:36:00 CET 2026
+
+OUTCOME
+- Root cause was NOT dynamic discovery. Backend returned HTTP 500 because the agent used column/filter `crypto_object_name`. The correct column is `name` (returned in results as `crypto_object_name`). Verified live (read-only probes): search_by / filter "(name=='...')" with `name` column return the object; search_by only matches requested columns.
+- Server lists 62 real tools without header x-mcp-enable-discovery (header not required), but decision: KEEP dynamic discovery (IBM advice). No GCM_MCP_DISCOVERY switch added.
+- utils/agent_engine.py: system prompt rule 8 corrected (use `name`, never crypto_object_name/key_usage, params inside body, name lookup via search_by + `name` column, empty {} = no match); removed ambiguous "if function list already contains real tools" sentence; added explicit MODE: DIRECT note only when no `execute` tool is present.
+- Tests: 37 passed.
+- Earlier interim advice (use `subject`) was wrong and replaced.

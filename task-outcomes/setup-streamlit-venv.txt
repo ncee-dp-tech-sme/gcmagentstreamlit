@@ -1,0 +1,5 @@
+create a python virtual environment in .venv and activate it.  After activation install streamlit and update the requirements.txt When the environment is activated, run streamlit skills to install those in this folder
+
+Fri Nov 20 01:20:21 CET 2026
+
+Created .venv (Python 3.14.7), installed streamlit 1.67.0 (+deps), froze to requirements.txt, ran 'streamlit skills --yes' -> .agents/skills/developing-with-streamlit (symlink into .venv). Added .gitignore (.venv, .env, skills symlink).

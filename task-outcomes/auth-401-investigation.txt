@@ -1,0 +1,16 @@
+can you check why I get I encountered an error executing your request: Authentication failed (HTTP 401). Check the token or API key.?In the UI the API key credential test is succesful.  The api documentation says max 60 requests per minute and Set maxRetries: 0 / max_retries=0 in your client too: retrying a POST is a new generation and may incur another chargeCan you check?
+Fri Nov 20 03:01:30 CET 2026
+
+ROOT CAUSE ANALYSIS:
+1. Two Separate Credential Configurations:
+   - AI Provider (1min.ai / OpenAI / Gemini / IBM watsonx.ai): Configured under the "AI provider" tab in Configuration. "Test credentials" performs GET /models against the AI provider base URL (https://api.1min.ai/openai/v1/models) with your 1min.AI API key. This test succeeded because your 1min.AI key is valid.
+   - GCM MCP Server (Guardium Cryptography Manager): Configured under the "GCM MCP server" tab in Configuration. When the Agent starts a turn, it opens a session with the GCM server using the GCM Bearer token.
+   - The HTTP 401 error was returned by the GCM MCP Server (not 1min.ai), because the GCM Bearer token was expired, invalid, or rejected during session initialization.
+
+2. Error Attribution Improvement:
+   - Updated `utils/mcp_client.py` and `utils/agent_engine.py` to explicitly prefix error messages with the exact component ("GCM MCP server: Authentication failed (HTTP 401)..." vs "1min.ai AI provider error...").
+
+3. Rate Limits & Max Retries (1min.ai API Spec Verification):
+   - Rate Limit: 1min.ai limits requests to 60 requests/minute per user.
+   - Max Retries: 1min.ai documentation specifies `max_retries=0` because automatic POST retries trigger new generations and bill extra credits.
+   - Client Implementation: The client uses direct non-retried requests (`requests.post`), ensuring no duplicate generation charges occur.

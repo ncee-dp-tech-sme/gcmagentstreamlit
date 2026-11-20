@@ -1,0 +1,17 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+
+# Streamlit agent skills (environment-specific symlinks)
+.agents/skills/developing-with-streamlit
+
+# App data (encrypted config, key file)
+data/
+.pytest_cache/
+tmp/
+
+# Local tooling/IDE config (may contain tokens)
+.bob/
+.vscode/
+.DS_Store
